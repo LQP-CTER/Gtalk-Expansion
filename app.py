@@ -317,27 +317,58 @@ def safe_unique(s):
 
 selected_date = st.sidebar.selectbox("NGÀY BÁO CÁO", options=all_dates, index=len(all_dates)-1)
 
+# --- XỬ LÝ CLICK TỪ BIỂU ĐỒ (CROSS-FILTERING) ---
+chart_selected_divisions = []
+for chart_key in ["division_chart", "topbot_chart", "waterfall_chart"]:
+    if chart_key in st.session_state:
+        state = st.session_state[chart_key]
+        if "selection" in state and "points" in state["selection"]:
+            # Với biểu đồ ngang ngang (fig_div, fig_tb), tên division nằm ở pt["y"]
+            # Với biểu đồ dọc (fig_wf), tên division nằm ở pt["x"]
+            for pt in state["selection"]["points"]:
+                if "y" in pt and isinstance(pt["y"], str):
+                    chart_selected_divisions.append(pt["y"])
+                elif "x" in pt and isinstance(pt["x"], str):
+                    # Bỏ các dấu ... trong waterfall nếu có
+                    val = pt["x"].replace("...", "")
+                    # Tìm mapping tương đối (vì wf_names có thể bị cắt ngắn)
+                    chart_selected_divisions.append(val)
+
 all_divisions = safe_unique(df_staff['division_name_vn'])
 selected_divisions = st.sidebar.multiselect("KHỐI (DIVISION)", all_divisions)
 
-df_filtered = df_staff.copy()
+df_sidebar = df_staff.copy()
 if selected_divisions:
-    df_filtered = df_filtered[df_filtered['division_name_vn'].isin(selected_divisions)]
+    df_sidebar = df_sidebar[df_sidebar['division_name_vn'].isin(selected_divisions)]
 
-all_departments = safe_unique(df_filtered['department_name_vn'])
+all_departments = safe_unique(df_sidebar['department_name_vn'])
 selected_departments = st.sidebar.multiselect("PHÒNG BAN (DEPARTMENT)", all_departments)
 if selected_departments:
-    df_filtered = df_filtered[df_filtered['department_name_vn'].isin(selected_departments)]
+    df_sidebar = df_sidebar[df_sidebar['department_name_vn'].isin(selected_departments)]
 
-all_sections = safe_unique(df_filtered['section_name_vn'])
+all_sections = safe_unique(df_sidebar['section_name_vn'])
 selected_sections = st.sidebar.multiselect("BỘ PHẬN (SECTION)", all_sections)
 if selected_sections:
-    df_filtered = df_filtered[df_filtered['section_name_vn'].isin(selected_sections)]
+    df_sidebar = df_sidebar[df_sidebar['section_name_vn'].isin(selected_sections)]
 
-all_teams = safe_unique(df_filtered['team_name_vn'])
+all_teams = safe_unique(df_sidebar['team_name_vn'])
 selected_teams = st.sidebar.multiselect("TEAM", all_teams)
 if selected_teams:
-    df_filtered = df_filtered[df_filtered['team_name_vn'].isin(selected_teams)]
+    df_sidebar = df_sidebar[df_sidebar['team_name_vn'].isin(selected_teams)]
+
+# Xử lý trường hợp waterfall cắt ngắn tên
+if chart_selected_divisions:
+    matched_divisions = []
+    for cd in chart_selected_divisions:
+        for ad in all_divisions:
+            if cd.strip() in ad:
+                matched_divisions.append(ad)
+    chart_selected_divisions = list(set(chart_selected_divisions + matched_divisions))
+
+df_filtered = df_sidebar.copy()
+if chart_selected_divisions:
+    df_filtered = df_filtered[df_filtered['division_name_vn'].isin(chart_selected_divisions)]
+
 
 # Legend in sidebar
 st.sidebar.markdown("---")
@@ -517,15 +548,16 @@ st.markdown('</div>', unsafe_allow_html=True)
 st.markdown('<div class="ibcs-section">', unsafe_allow_html=True)
 st.markdown("<h3>PHÂN TÍCH THEO KHỐI (DIVISION) · TỶ LỆ ADOPTION</h3>", unsafe_allow_html=True)
 
-if len(df_filtered) > 0:
+if len(df_sidebar) > 0:
     active_set_curr = active_by_date[selected_date]
     active_set_prev = active_by_date[prev_date] if prev_date else set()
     
-    df_temp = df_filtered.copy()
-    df_temp["is_active_curr"] = df_temp["employee_id"].isin(active_set_curr)
-    df_temp["is_active_prev"] = df_temp["employee_id"].isin(active_set_prev)
+    # 1. DỮ LIỆU BIỂU ĐỒ TRÁI (LUÔN HIỂN THỊ CÁC KHỐI THEO SIDEBAR)
+    df_chart = df_sidebar.copy()
+    df_chart["is_active_curr"] = df_chart["employee_id"].isin(active_set_curr)
+    df_chart["is_active_prev"] = df_chart["employee_id"].isin(active_set_prev)
     
-    div_df = df_temp.groupby("division_name_vn").agg(
+    div_df = df_chart.groupby("division_name_vn").agg(
         total=("employee_id", "count"),
         active_curr=("is_active_curr", "sum"),
         active_prev=("is_active_prev", "sum"),
@@ -537,16 +569,40 @@ if len(df_filtered) > 0:
     div_df["delta_abs"] = div_df["active_curr"] - div_df["active_prev"]
     div_df = div_df.sort_values("pct_curr", ascending=True).reset_index(drop=True)
     
-    # Only show divisions with meaningful staff count
     div_df_display = div_df[div_df["total"] >= 3].copy()
     
-    msg_top = div_df_display.sort_values("pct_curr", ascending=False).iloc[0]
-    msg_bottom = div_df_display.sort_values("pct_curr", ascending=True).iloc[0]
-    st.markdown(
-        f'<p class="section-msg">Khối cao nhất: <b>{msg_top["division_name_vn"]}</b> ({msg_top["pct_curr"]:.1f}%) · '
-        f'Thấp nhất: <b>{msg_bottom["division_name_vn"]}</b> ({msg_bottom["pct_curr"]:.1f}%)</p>',
-        unsafe_allow_html=True
-    )
+    # 2. DỮ LIỆU BẢNG PHẢI (DRILL-DOWN VÀO PHÒNG BAN NẾU CHỌN 1 KHỐI)
+    is_drilldown = len(chart_selected_divisions) == 1
+    drill_col = "department_name_vn" if is_drilldown else "division_name_vn"
+    drill_title = "Phòng Ban" if is_drilldown else "Khối"
+    
+    df_table = df_filtered.copy() if is_drilldown else df_sidebar.copy()
+    df_table["is_active_curr"] = df_table["employee_id"].isin(active_set_curr)
+    df_table["is_active_prev"] = df_table["employee_id"].isin(active_set_prev)
+    
+    table_df = df_table.groupby(drill_col).agg(
+        total=("employee_id", "count"),
+        active_curr=("is_active_curr", "sum"),
+        active_prev=("is_active_prev", "sum"),
+    ).reset_index()
+    table_df = table_df.rename(columns={drill_col: "name"})
+    
+    table_df["pct_curr"] = (table_df["active_curr"] / table_df["total"] * 100).round(1)
+    table_df["pct_prev"] = (table_df["active_prev"] / table_df["total"] * 100).round(1)
+    table_df["delta_pct"] = (table_df["pct_curr"] - table_df["pct_prev"]).round(1)
+    table_df["delta_abs"] = table_df["active_curr"] - table_df["active_prev"]
+    
+    if is_drilldown:
+        drill_msg = f'<span style="color:#2c5f8a; font-weight:600;">Đang xem chi tiết {len(table_df)} Phòng Ban thuộc Khối: {chart_selected_divisions[0]}</span>'
+    else:
+        if len(div_df_display) > 0:
+            msg_top = div_df_display.sort_values("pct_curr", ascending=False).iloc[0]
+            msg_bottom = div_df_display.sort_values("pct_curr", ascending=True).iloc[0]
+            drill_msg = f'Khối cao nhất: <b>{msg_top["division_name_vn"]}</b> ({msg_top["pct_curr"]:.1f}%) · Thấp nhất: <b>{msg_bottom["division_name_vn"]}</b> ({msg_bottom["pct_curr"]:.1f}%)'
+        else:
+            drill_msg = ""
+            
+    st.markdown(f'<p class="section-msg">{drill_msg}</p>', unsafe_allow_html=True)
     
     col_chart, col_table = st.columns([3, 2])
     
@@ -597,13 +653,19 @@ if len(df_filtered) > 0:
         fig_div.update_xaxes(range=[0, 105], dtick=25, showgrid=True, gridcolor="#eee")
         fig_div.update_yaxes(showgrid=False, tickfont=dict(size=10))
         
-        st.plotly_chart(fig_div, use_container_width=True)
+        st.plotly_chart(
+            fig_div, 
+            use_container_width=True, 
+            on_select="rerun",
+            selection_mode="points",
+            key="division_chart"
+        )
     
     with col_table:
         # IBCS structured table with inline variance
         rows_html = ""
-        sorted_div = div_df_display.sort_values("pct_curr", ascending=False)
-        for _, r in sorted_div.iterrows():
+        sorted_table = table_df.sort_values("pct_curr", ascending=False)
+        for _, r in sorted_table.iterrows():
             if r["delta_pct"] > 0:
                 delta_cls, delta_sign = "pos", "+"
             elif r["delta_pct"] < 0:
@@ -616,7 +678,7 @@ if len(df_filtered) > 0:
             # GIẢI PHÁP: Xóa khoảng trắng đầu dòng cho thẻ HTML để tránh lỗi Markdown
             rows_html += f"""
 <tr>
-<td style="max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{r['division_name_vn']}</td>
+<td style="max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{r['name']}</td>
 <td class="num">{int(r['total']):,}</td>
 <td class="num">{int(r['active_curr']):,}</td>
 <td class="num" style="font-weight:600">{r['pct_curr']:.1f}%</td>
@@ -631,9 +693,9 @@ if len(df_filtered) > 0:
 """
         
         # Totals
-        t_total = sorted_div['total'].sum()
-        t_active = sorted_div['active_curr'].sum()
-        t_prev = sorted_div['active_prev'].sum()
+        t_total = sorted_table['total'].sum()
+        t_active = sorted_table['active_curr'].sum()
+        t_prev = sorted_table['active_prev'].sum()
         t_pct = (t_active/t_total*100) if t_total > 0 else 0
         t_pct_prev = (t_prev/t_total*100) if t_total > 0 else 0
         t_delta_pct = t_pct - t_pct_prev
@@ -663,7 +725,7 @@ if len(df_filtered) > 0:
 <table class="ibcs-table">
 <thead>
 <tr>
-<th>Khối</th>
+<th>{drill_title}</th>
 <th class="num">HC</th>
 <th class="num">Active</th>
 <th class="num">%</th>
@@ -729,7 +791,13 @@ with col_wf:
             )
             fig_wf.update_xaxes(tickangle=-45, tickfont=dict(size=8))
             
-            st.plotly_chart(fig_wf, use_container_width=True)
+            st.plotly_chart(
+                fig_wf, 
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode="points",
+                key="waterfall_chart"
+            )
         else:
             st.info("Không có thay đổi giữa hai kỳ.")
     else:
@@ -785,7 +853,13 @@ with col_topbot:
             fig_tb.update_xaxes(range=[0, 105], dtick=25, showgrid=True, gridcolor="#eee")
             fig_tb.update_yaxes(showgrid=False, tickfont=dict(size=9))
             
-            st.plotly_chart(fig_tb, use_container_width=True)
+            st.plotly_chart(
+                fig_tb, 
+                use_container_width=True,
+                on_select="rerun",
+                selection_mode="points",
+                key="topbot_chart"
+            )
         else:
             st.info("Cần ít nhất 2 khối để so sánh.")
     
