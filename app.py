@@ -208,11 +208,105 @@ st.markdown("""
     
     /* Selectbox/sidebar tweaks */
     .stSelectbox label, .stMultiSelect label {
-        font-size: 0.8rem !important;
-        font-weight: 600 !important;
+        font-size: 0.75rem !important;
+        font-weight: 700 !important;
         text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #666 !important;
+        letter-spacing: 0.06em;
+        color: #555 !important;
+    }
+
+    /* --- Sidebar polish --- */
+    section[data-testid="stSidebar"] {
+        background: #f8f8f8 !important;
+        border-right: 1px solid #e0e0e0 !important;
+    }
+    section[data-testid="stSidebar"] .stButton > button {
+        background: #1a1a1a !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 3px !important;
+        font-size: 0.75rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.04em !important;
+        padding: 6px 12px !important;
+        width: 100% !important;
+        transition: background 0.15s !important;
+    }
+    section[data-testid="stSidebar"] .stButton > button:hover {
+        background: #333 !important;
+    }
+
+    /* Filter section card */
+    .filter-card {
+        background: white;
+        border: 1px solid #e8e8e8;
+        border-left: 3px solid #1a1a1a;
+        border-radius: 0 3px 3px 0;
+        padding: 10px 12px;
+        margin-bottom: 8px;
+    }
+    .filter-card-label {
+        font-size: 0.68rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #888;
+        margin-bottom: 4px;
+    }
+    .filter-badge {
+        display: inline-block;
+        background: #1a1a1a;
+        color: white;
+        font-size: 0.62rem;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 10px;
+        margin-left: 4px;
+        vertical-align: middle;
+    }
+    .filter-badge-blue {
+        background: #2c5f8a;
+    }
+    .filter-active-tag {
+        display: inline-block;
+        background: #e8f0f7;
+        color: #2c5f8a;
+        border: 1px solid #b8d0e8;
+        font-size: 0.68rem;
+        padding: 2px 7px;
+        border-radius: 10px;
+        margin: 2px 2px 0 0;
+        font-weight: 500;
+    }
+
+    /* Date selector highlight */
+    .date-selector-wrap {
+        background: #1a1a1a;
+        border-radius: 4px;
+        padding: 10px 12px 8px;
+        margin-bottom: 12px;
+    }
+    .date-selector-wrap label {
+        color: #aaa !important;
+        font-size: 0.68rem !important;
+        letter-spacing: 0.08em !important;
+    }
+    .date-selector-wrap .stSelectbox > div > div {
+        background: #333 !important;
+        border-color: #555 !important;
+        color: white !important;
+    }
+
+    /* Reset button */
+    .reset-btn > button {
+        background: transparent !important;
+        color: #b30000 !important;
+        border: 1px solid #b30000 !important;
+        font-size: 0.72rem !important;
+        padding: 4px 10px !important;
+    }
+    .reset-btn > button:hover {
+        background: #fff0f0 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -279,83 +373,143 @@ def load_data():
                 
     df_history.columns = new_cols
     
+    # Normalize employee_id data1 → string
+    def norm_id(x):
+        if pd.isna(x): return None
+        if isinstance(x, float): return str(int(x))
+        return str(x).strip()
+    df_staff['employee_id'] = df_staff['employee_id'].apply(norm_id)
+    df_staff = df_staff.dropna(subset=['employee_id']).drop_duplicates(subset=['employee_id']).reset_index(drop=True)
+
+    # active_by_date: snapshot từng ngày, giữ TOÀN BỘ ID (kể cả unmapped)
     active_by_date = {}
-    all_active_ids = set()
     for col in df_history.columns:
-        active_ids = df_history[col].dropna().unique()
-        active_by_date[col] = set(active_ids)
-        all_active_ids.update(active_ids)
-        
-    # Lấy các user có active nhưng không tồn tại trong data1
-    # NOTE: unmapped_ids KHÔNG được đưa vào df_staff để tránh làm sai số headcount.
-    # active_by_date vẫn chứa đầy đủ các ID này nên tỷ lệ active vẫn đúng.
-    # unmapped_count chỉ dùng để hiển thị thông tin debug nếu cần.
-    mapped_ids = set(df_staff['employee_id'].dropna())
-    unmapped_ids = all_active_ids - mapped_ids
-    unmapped_count = len(unmapped_ids)  # lưu để debug, không append vào df_staff
+        raw = df_history[col].dropna()
+        normalized = raw.apply(norm_id).dropna()
+        active_by_date[col] = set(normalized.unique())
 
-    return df_staff, active_by_date, unmapped_count
+    return df_staff, active_by_date
 
-df_staff, active_by_date, unmapped_count = load_data()
+df_staff, active_by_date = load_data()
 all_dates = list(active_by_date.keys())
 
 # ─── Sidebar Filters ────────────────────────────────────────────────────────
-st.sidebar.markdown("""
-<div style='border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 16px;'>
-<strong style='font-size: 1rem; color: #1a1a1a;'>📊 BỘ LỌC BÁO CÁO</strong><br/>
-<span style='font-size: 0.75rem; color: #888;'>Report Filters</span>
-</div>
-""", unsafe_allow_html=True)
-
-if st.sidebar.button("🔄 Tải lại dữ liệu mới nhất"):
-    load_data.clear()
-    st.rerun()
-
 def safe_unique(s):
     return sorted([x for x in s.dropna().unique() if str(x).strip() != ""])
 
-selected_date = st.sidebar.selectbox("NGÀY BÁO CÁO", options=all_dates, index=len(all_dates)-1)
+# Header
+st.sidebar.markdown("""
+<div style='padding: 16px 4px 12px; border-bottom: 2px solid #1a1a1a; margin-bottom: 14px;'>
+  <div style='font-size: 1rem; font-weight: 700; color: #1a1a1a; letter-spacing: -0.01em;'>BỘ LỌC BÁO CÁO</div>
+  <div style='font-size: 0.72rem; color: #999; margin-top: 2px;'>Gtalk Adoption Dashboard</div>
+</div>
+""", unsafe_allow_html=True)
 
-# --- XỬ LÝ CLICK TỪ BIỂU ĐỒ (CROSS-FILTERING) ---
+# ── Ngày báo cáo ──────────────────────────────────────────────────────────
+st.sidebar.markdown('<div class="filter-card-label">📅 NGÀY BÁO CÁO</div>', unsafe_allow_html=True)
+selected_date = st.sidebar.selectbox(
+    "Ngày báo cáo",
+    options=all_dates,
+    index=len(all_dates) - 1,
+    label_visibility="collapsed",
+)
+
+# Reload button
+if st.sidebar.button("↺  Tải lại dữ liệu mới nhất", use_container_width=True):
+    load_data.clear()
+    st.rerun()
+
+st.sidebar.markdown("<div style='margin: 14px 0 10px; border-top: 1px solid #e8e8e8;'></div>", unsafe_allow_html=True)
+st.sidebar.markdown('<div style="font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:#888;margin-bottom:8px;">🔍 LỌC ĐƠN VỊ (cascade)</div>', unsafe_allow_html=True)
+
+# ── Cascade filters ────────────────────────────────────────────────────────
+# Level 1: Division
+all_divisions = safe_unique(df_staff['division_name_vn'])
+selected_divisions = st.sidebar.multiselect(
+    f"KHỐI (DIVISION)  [{len(all_divisions)}]",
+    options=all_divisions,
+    placeholder="Tất cả khối…",
+)
+
+df_sidebar = df_staff.copy()
+if selected_divisions:
+    df_sidebar = df_sidebar[df_sidebar['division_name_vn'].isin(selected_divisions)]
+    tags_html = "".join(f'<span class="filter-active-tag">{v}</span>' for v in selected_divisions)
+    st.sidebar.markdown(f'<div style="margin:-6px 0 6px;">{tags_html}</div>', unsafe_allow_html=True)
+
+# Level 2: Department — chỉ show options của division đã chọn
+all_departments = safe_unique(df_sidebar['department_name_vn'])
+selected_departments = st.sidebar.multiselect(
+    f"PHÒNG BAN (DEPT)  [{len(all_departments)}]",
+    options=all_departments,
+    placeholder="Tất cả phòng ban…",
+    disabled=(len(all_departments) == 0),
+)
+if selected_departments:
+    df_sidebar = df_sidebar[df_sidebar['department_name_vn'].isin(selected_departments)]
+    tags_html = "".join(f'<span class="filter-active-tag">{v}</span>' for v in selected_departments)
+    st.sidebar.markdown(f'<div style="margin:-6px 0 6px;">{tags_html}</div>', unsafe_allow_html=True)
+
+# Level 3: Section
+all_sections = safe_unique(df_sidebar['section_name_vn'])
+selected_sections = st.sidebar.multiselect(
+    f"BỘ PHẬN (SECTION)  [{len(all_sections)}]",
+    options=all_sections,
+    placeholder="Tất cả bộ phận…",
+    disabled=(len(all_sections) == 0),
+)
+if selected_sections:
+    df_sidebar = df_sidebar[df_sidebar['section_name_vn'].isin(selected_sections)]
+    tags_html = "".join(f'<span class="filter-active-tag">{v}</span>' for v in selected_sections)
+    st.sidebar.markdown(f'<div style="margin:-6px 0 6px;">{tags_html}</div>', unsafe_allow_html=True)
+
+# Level 4: Team
+all_teams = safe_unique(df_sidebar['team_name_vn'])
+selected_teams = st.sidebar.multiselect(
+    f"TEAM / VÙNG  [{len(all_teams)}]",
+    options=all_teams,
+    placeholder="Tất cả team…",
+    disabled=(len(all_teams) == 0),
+)
+if selected_teams:
+    df_sidebar = df_sidebar[df_sidebar['team_name_vn'].isin(selected_teams)]
+    tags_html = "".join(f'<span class="filter-active-tag">{v}</span>' for v in selected_teams)
+    st.sidebar.markdown(f'<div style="margin:-6px 0 6px;">{tags_html}</div>', unsafe_allow_html=True)
+
+# Reset button — chỉ hiện khi có filter active
+any_filter = any([selected_divisions, selected_departments, selected_sections, selected_teams])
+if any_filter:
+    st.sidebar.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
+    if st.sidebar.button("✕  Xóa tất cả bộ lọc", use_container_width=True, type="secondary"):
+        for k in ["division_chart", "topbot_chart", "waterfall_chart"]:
+            if k in st.session_state:
+                del st.session_state[k]
+        st.rerun()
+
+# Summary badge
+total_shown = len(df_sidebar)
+total_all   = len(df_staff)
+pct_shown   = total_shown / total_all * 100 if total_all > 0 else 0
+st.sidebar.markdown(f"""
+<div style='margin-top:12px; padding: 8px 10px; background:#f0f4f8; border-radius:3px; border-left:3px solid #2c5f8a;'>
+  <div style='font-size:0.68rem; color:#888; text-transform:uppercase; letter-spacing:0.06em;'>Phạm vi hiện tại</div>
+  <div style='font-size:1.1rem; font-weight:700; color:#1a1a1a; margin-top:2px;'>{total_shown:,} <span style='font-size:0.75rem;font-weight:400;color:#666;'>/ {total_all:,} nhân sự</span></div>
+  <div style='font-size:0.72rem; color:#2c5f8a; font-weight:600;'>{pct_shown:.1f}% tổng headcount</div>
+</div>
+""", unsafe_allow_html=True)
+
+# ── Cross-filter từ chart click ────────────────────────────────────────────
 chart_selected_divisions = []
 for chart_key in ["division_chart", "topbot_chart", "waterfall_chart"]:
     if chart_key in st.session_state:
         state = st.session_state[chart_key]
         if "selection" in state and "points" in state["selection"]:
-            # Với biểu đồ ngang ngang (fig_div, fig_tb), tên division nằm ở pt["y"]
-            # Với biểu đồ dọc (fig_wf), tên division nằm ở pt["x"]
             for pt in state["selection"]["points"]:
                 if "y" in pt and isinstance(pt["y"], str):
                     chart_selected_divisions.append(pt["y"])
                 elif "x" in pt and isinstance(pt["x"], str):
-                    # Bỏ các dấu ... trong waterfall nếu có
-                    val = pt["x"].replace("...", "")
-                    # Tìm mapping tương đối (vì wf_names có thể bị cắt ngắn)
-                    chart_selected_divisions.append(val)
+                    chart_selected_divisions.append(pt["x"].replace("...", ""))
 
-all_divisions = safe_unique(df_staff['division_name_vn'])
-selected_divisions = st.sidebar.multiselect("KHỐI (DIVISION)", all_divisions)
-
-df_sidebar = df_staff.copy()
-if selected_divisions:
-    df_sidebar = df_sidebar[df_sidebar['division_name_vn'].isin(selected_divisions)]
-
-all_departments = safe_unique(df_sidebar['department_name_vn'])
-selected_departments = st.sidebar.multiselect("PHÒNG BAN (DEPARTMENT)", all_departments)
-if selected_departments:
-    df_sidebar = df_sidebar[df_sidebar['department_name_vn'].isin(selected_departments)]
-
-all_sections = safe_unique(df_sidebar['section_name_vn'])
-selected_sections = st.sidebar.multiselect("BỘ PHẬN (SECTION)", all_sections)
-if selected_sections:
-    df_sidebar = df_sidebar[df_sidebar['section_name_vn'].isin(selected_sections)]
-
-all_teams = safe_unique(df_sidebar['team_name_vn'])
-selected_teams = st.sidebar.multiselect("TEAM", all_teams)
-if selected_teams:
-    df_sidebar = df_sidebar[df_sidebar['team_name_vn'].isin(selected_teams)]
-
-# Xử lý trường hợp waterfall cắt ngắn tên
 if chart_selected_divisions:
     matched_divisions = []
     for cd in chart_selected_divisions:
@@ -368,24 +522,15 @@ df_filtered = df_sidebar.copy()
 if chart_selected_divisions:
     df_filtered = df_filtered[df_filtered['division_name_vn'].isin(chart_selected_divisions)]
 
-
-# Legend in sidebar
-st.sidebar.markdown("---")
+# ── Legend + IBCS ─────────────────────────────────────────────────────────
+st.sidebar.markdown("<div style='margin: 16px 0 10px; border-top: 1px solid #e8e8e8;'></div>", unsafe_allow_html=True)
 st.sidebar.markdown("""
-<div style='font-size: 0.75rem; color: #888; line-height: 1.8;'>
-<strong style="color:#555;">KÝ HIỆU IBCS</strong><br/>
-<span style='display:inline-block;width:14px;height:10px;background:#1a1a1a;vertical-align:middle;margin-right:4px'></span> Hiện tại (AC)<br/>
-<span style='display:inline-block;width:14px;height:10px;background:#999;vertical-align:middle;margin-right:4px'></span> Kỳ trước (PY)<br/>
-<span style='display:inline-block;width:14px;height:10px;background:#006400;vertical-align:middle;margin-right:4px'></span> Chênh lệch dương (ΔPos)<br/>
-<span style='display:inline-block;width:14px;height:10px;background:#b30000;vertical-align:middle;margin-right:4px'></span> Chênh lệch âm (ΔNeg)<br/>
-</div>
-""", unsafe_allow_html=True)
-
-if unmapped_count > 0:
-    st.sidebar.markdown(f"""
-<div style='font-size: 0.72rem; color: #999; margin-top: 8px; padding: 8px; background: #f5f5f5; border-left: 3px solid #ccc;'>
-⚠️ <strong>{unmapped_count:,}</strong> user active không tìm thấy trong danh sách nhân sự (data1). 
-Các user này không được tính vào Tổng Headcount.
+<div style='font-size: 0.72rem; color: #888; line-height: 2;'>
+<div style='font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#555; margin-bottom:4px;'>Ký hiệu IBCS</div>
+<span style='display:inline-block;width:12px;height:8px;background:#1a1a1a;vertical-align:middle;margin-right:5px;border-radius:1px'></span>Hiện tại (AC)<br/>
+<span style='display:inline-block;width:12px;height:8px;background:#999;vertical-align:middle;margin-right:5px;border-radius:1px'></span>Kỳ trước (PY)<br/>
+<span style='display:inline-block;width:12px;height:8px;background:#006400;vertical-align:middle;margin-right:5px;border-radius:1px'></span>Tăng (ΔPos)<br/>
+<span style='display:inline-block;width:12px;height:8px;background:#b30000;vertical-align:middle;margin-right:5px;border-radius:1px'></span>Giảm (ΔNeg)
 </div>
 """, unsafe_allow_html=True)
 
@@ -396,13 +541,16 @@ prev_date = all_dates[current_idx - 1] if current_idx > 0 else None
 first_date = all_dates[0]
 
 def compute_metrics(target_date, df):
+    """
+    total  = số nhân sự trong data1 (theo filter)
+    active = toàn bộ ID trong snapshot ngày đó (kể cả unmapped)
+    """
     if target_date is None:
         return 0, 0, 0.0
-    active_set = active_by_date[target_date]
     total_staff = len(df)
     if total_staff == 0:
         return 0, 0, 0.0
-    active_staff = int(df['employee_id'].isin(active_set).sum())
+    active_staff = len(active_by_date[target_date])
     active_pct = (active_staff / total_staff) * 100
     return total_staff, active_staff, active_pct
 
