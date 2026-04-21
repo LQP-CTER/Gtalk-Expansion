@@ -243,7 +243,7 @@ def ibcs_layout(**kwargs):
 
 
 # ─── Data Loading ────────────────────────────────────────────────────────────
-@st.cache_data(show_spinner="Đang xử lý dữ liệu...")
+@st.cache_data(ttl=21600, show_spinner="Đang xử lý dữ liệu...")
 def load_data():
     import urllib.request
     import io
@@ -280,24 +280,9 @@ def load_data():
     df_history.columns = new_cols
     
     active_by_date = {}
-    all_active_ids = set()
     for col in df_history.columns:
         active_ids = df_history[col].dropna().unique()
         active_by_date[col] = set(active_ids)
-        all_active_ids.update(active_ids)
-        
-    # Append unmapped users to df_staff
-    mapped_ids = set(df_staff['employee_id'].dropna())
-    unmapped_ids = all_active_ids - mapped_ids
-    
-    if unmapped_ids:
-        unmapped_df = pd.DataFrame({'employee_id': list(unmapped_ids)})
-        unmapped_df['division_name_vn'] = 'Chưa phân bổ (Unmapped)'
-        unmapped_df['department_name_vn'] = 'Chưa phân bổ (Unmapped)'
-        unmapped_df['section_name_vn'] = 'Chưa phân bổ (Unmapped)'
-        unmapped_df['team_name_vn'] = 'Chưa phân bổ (Unmapped)'
-        unmapped_df['bu_name'] = 'Chưa phân bổ (Unmapped)'
-        df_staff = pd.concat([df_staff, unmapped_df], ignore_index=True)
         
     return df_staff, active_by_date
 
@@ -311,6 +296,10 @@ st.sidebar.markdown("""
 <span style='font-size: 0.75rem; color: #888;'>Report Filters</span>
 </div>
 """, unsafe_allow_html=True)
+
+if st.sidebar.button("🔄 Tải lại dữ liệu mới nhất"):
+    load_data.clear()
+    st.rerun()
 
 def safe_unique(s):
     return sorted([x for x in s.dropna().unique() if str(x).strip() != ""])
@@ -1267,7 +1256,6 @@ st.markdown('</div>', unsafe_allow_html=True)
 st.markdown(f"""
 <div class="report-footer">
 <strong>IBCS</strong> · International Business Communication Standards · 
-Dữ liệu: <code>[Gtalk Expansion] Workforce Analysis.xlsx</code> · 
-Được tạo tự động · {datetime.now().strftime('%d/%m/%Y %H:%M')}
+Data source: <code>[Gtalk Expansion] Workforce Analysis</code> · Developed by <b>EX Team</b> · {datetime.now().strftime('%d/%m/%Y %H:%M')}
 </div>
 """, unsafe_allow_html=True)
