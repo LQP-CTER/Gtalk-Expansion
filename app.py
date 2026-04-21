@@ -280,13 +280,23 @@ def load_data():
     df_history.columns = new_cols
     
     active_by_date = {}
+    all_active_ids = set()
     for col in df_history.columns:
         active_ids = df_history[col].dropna().unique()
         active_by_date[col] = set(active_ids)
+        all_active_ids.update(active_ids)
         
-    return df_staff, active_by_date
+    # Lấy các user có active nhưng không tồn tại trong data1
+    # NOTE: unmapped_ids KHÔNG được đưa vào df_staff để tránh làm sai số headcount.
+    # active_by_date vẫn chứa đầy đủ các ID này nên tỷ lệ active vẫn đúng.
+    # unmapped_count chỉ dùng để hiển thị thông tin debug nếu cần.
+    mapped_ids = set(df_staff['employee_id'].dropna())
+    unmapped_ids = all_active_ids - mapped_ids
+    unmapped_count = len(unmapped_ids)  # lưu để debug, không append vào df_staff
 
-df_staff, active_by_date = load_data()
+    return df_staff, active_by_date, unmapped_count
+
+df_staff, active_by_date, unmapped_count = load_data()
 all_dates = list(active_by_date.keys())
 
 # ─── Sidebar Filters ────────────────────────────────────────────────────────
@@ -368,6 +378,14 @@ st.sidebar.markdown("""
 <span style='display:inline-block;width:14px;height:10px;background:#999;vertical-align:middle;margin-right:4px'></span> Kỳ trước (PY)<br/>
 <span style='display:inline-block;width:14px;height:10px;background:#006400;vertical-align:middle;margin-right:4px'></span> Chênh lệch dương (ΔPos)<br/>
 <span style='display:inline-block;width:14px;height:10px;background:#b30000;vertical-align:middle;margin-right:4px'></span> Chênh lệch âm (ΔNeg)<br/>
+</div>
+""", unsafe_allow_html=True)
+
+if unmapped_count > 0:
+    st.sidebar.markdown(f"""
+<div style='font-size: 0.72rem; color: #999; margin-top: 8px; padding: 8px; background: #f5f5f5; border-left: 3px solid #ccc;'>
+⚠️ <strong>{unmapped_count:,}</strong> user active không tìm thấy trong danh sách nhân sự (data1). 
+Các user này không được tính vào Tổng Headcount.
 </div>
 """, unsafe_allow_html=True)
 
@@ -867,12 +885,12 @@ breakdown_level = st.selectbox(
     label_visibility="collapsed"
 )
 col_map = {
-    "Khối (Division)": "division_name_vn",
-    "Phòng Ban (Department)": "department_name_vn",
-    "Bộ Phận (Section)": "section_name_vn",
-    "Team": "team_name_vn"
+    "Khối (Division)": ["division_name_vn"],
+    "Phòng Ban (Department)": ["division_name_vn", "department_name_vn"],
+    "Bộ Phận (Section)": ["division_name_vn", "department_name_vn", "section_name_vn"],
+    "Team": ["division_name_vn", "department_name_vn", "section_name_vn", "team_name_vn"]
 }
-group_col = col_map[breakdown_level]
+group_cols = col_map[breakdown_level]
 
 if len(df_filtered) > 0:
     active_set_c = active_by_date[selected_date]
@@ -882,7 +900,7 @@ if len(df_filtered) > 0:
     df_bd["is_active_c"] = df_bd["employee_id"].isin(active_set_c)
     df_bd["is_active_p"] = df_bd["employee_id"].isin(active_set_p)
     
-    bd_df = df_bd.groupby(group_col).agg(
+    bd_df = df_bd.groupby(group_cols, dropna=False).agg(
         total=("employee_id", "count"),
         active_c=("is_active_c", "sum"),
         active_p=("is_active_p", "sum"),
@@ -907,11 +925,20 @@ if len(df_filtered) > 0:
         bar_w = min(r["pct_c"], 100)
         rank = idx + 1
         
+        name_parts = []
+        for c in group_cols:
+            val = r[c]
+            if pd.notna(val) and str(val).strip() != "":
+                name_parts.append(str(val))
+        disp_name = " › ".join(name_parts)
+        if not disp_name:
+            disp_name = "Chưa xác định"
+        
         # GIẢI PHÁP: Xóa khoảng trắng đầu dòng
         bd_rows += f"""
 <tr>
 <td class="num" style="color:#aaa;font-size:0.7rem">{rank}</td>
-<td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{r[group_col]}">{r[group_col]}</td>
+<td style="max-width:350px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{disp_name}">{disp_name}</td>
 <td class="num">{int(r['total']):,}</td>
 <td class="num">{int(r['active_c']):,}</td>
 <td class="num" style="color:#888">{int(r['inactive']):,}</td>
