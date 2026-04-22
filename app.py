@@ -382,7 +382,7 @@ first_date = all_dates[0]
 
 def compute_metrics(target_date, df):
     """
-    total_hc      : COUNTDISTINCT employee_id trong df (data1, theo filter) = 21,889 khi không filter
+    total_hc      : Tổng nhân sự
     gtalk_all     : tổng ID trong snapshot ngày đó (kể cả unmapped)
     mapped_active : nhân sự trong df đang có trong Gtalk (intersection)
     pct_mapped    : mapped_active / total_hc * 100
@@ -443,7 +443,7 @@ st.markdown(f"""
 <div class="kpi-card">
 <div class="kpi-label">👥 Tổng Nhân Sự</div>
 <div class="kpi-value">{curr_total:,}</div>
-<div class="kpi-sub">COUNTDISTINCT employee_id trong danh sách nhân sự · theo bộ lọc hiện tại</div>
+<div class="kpi-sub">Tổng nhân sự </div>
 </div>
 
 <div class="kpi-card" style="border-top-color:#2c5f8a;">
