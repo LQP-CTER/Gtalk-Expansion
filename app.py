@@ -279,26 +279,14 @@ def load_data():
                 
     df_history.columns = new_cols
     
+    # Giữ nguyên int dtype để match chính xác
+    # active_by_date: snapshot từng ngày, TOÀN BỘ ID (kể cả unmapped) dùng để đếm active
     active_by_date = {}
-    all_active_ids = set()
     for col in df_history.columns:
-        active_ids = df_history[col].dropna().unique()
-        active_by_date[col] = set(active_ids)
-        all_active_ids.update(active_ids)
-        
-    # Lấy các user có active nhưng không tồn tại trong data1
-    mapped_ids = set(df_staff['employee_id'].dropna())
-    unmapped_ids = all_active_ids - mapped_ids
-    
-    if unmapped_ids:
-        unmapped_df = pd.DataFrame({'employee_id': list(unmapped_ids)})
-        unmapped_df['division_name_vn'] = 'Chưa phân bổ (Unmapped)'
-        unmapped_df['department_name_vn'] = 'Chưa phân bổ (Unmapped)'
-        unmapped_df['section_name_vn'] = 'Chưa phân bổ (Unmapped)'
-        unmapped_df['team_name_vn'] = 'Chưa phân bổ (Unmapped)'
-        unmapped_df['bu_name'] = 'Chưa phân bổ (Unmapped)'
-        df_staff = pd.concat([df_staff, unmapped_df], ignore_index=True)
-        
+        ids = df_history[col].dropna()
+        active_by_date[col] = set(ids.astype(int).unique())
+
+    # KHÔNG concat unmapped vào df_staff — headcount chỉ tính từ data1
     return df_staff, active_by_date
 
 df_staff, active_by_date = load_data()
@@ -394,59 +382,32 @@ first_date = all_dates[0]
 
 def compute_metrics(target_date, df):
     """
-    Logic:
-    - total  = số nhân sự trong df (theo filter hiện tại, từ data1)
-    - active = nếu KHÔNG filter → len(snapshot) toàn công ty (gồm cả unmapped)
-               nếu CÓ filter    → số ID trong df khớp với snapshot ngày đó
-    - inactive = total - active_in_filter (chỉ tính người trong filter chưa dùng)
+    total_hc      : COUNTDISTINCT employee_id trong df (data1, theo filter) = 21,889 khi không filter
+    gtalk_all     : tổng ID trong snapshot ngày đó (kể cả unmapped)
+    mapped_active : nhân sự trong df đang có trong Gtalk (intersection)
+    pct_mapped    : mapped_active / total_hc * 100
     """
     if target_date is None:
-        return 0, 0, 0.0
-    active_set = active_by_date[target_date]
-    total_staff = len(df)
-    if total_staff == 0:
-        return 0, 0, 0.0
-    # Active trong phạm vi filter: ID của df khớp với snapshot
-    active_in_filter = int(df['employee_id'].isin(active_set).sum())
-    active_pct = (active_in_filter / total_staff) * 100
-    return total_staff, active_in_filter, active_pct
+        return 0, 0, 0, 0.0
+    if len(df) == 0:
+        return 0, 0, 0, 0.0
+    active_set    = active_by_date[target_date]          # set of int
+    total_hc      = df['employee_id'].nunique()
+    gtalk_all     = len(active_set)
+    # Convert về int để match đúng với active_set
+    mapped_active = int(df['employee_id'].dropna().astype(int).isin(active_set).sum())
+    pct_mapped    = (mapped_active / total_hc * 100) if total_hc > 0 else 0.0
+    return total_hc, gtalk_all, mapped_active, pct_mapped
 
-# Kiểm tra có filter nào đang active không
-_any_filter = (
-    len(df_filtered) < len(df_staff)
-)
+curr_total, curr_gtalk, curr_active, curr_pct = compute_metrics(selected_date, df_filtered)
+prev_total, prev_gtalk, prev_active, prev_pct = compute_metrics(prev_date,     df_filtered)
+first_total, first_gtalk, first_active, first_pct = compute_metrics(first_date, df_filtered)
 
-# Nếu không filter → active = toàn bộ snapshot (gồm unmapped)
-# Nếu có filter    → active = người trong filter đã dùng Gtalk
-def compute_active_display(target_date, df, no_filter_total):
-    """Trả về active count đúng tuỳ theo context filter."""
-    if target_date is None:
-        return 0
-    active_set = active_by_date[target_date]
-    if not _any_filter:
-        # Toàn công ty: dùng số snapshot (chuẩn nhất, gồm unmapped)
-        return len(active_set)
-    else:
-        # Có filter: chỉ đếm người trong df đã active
-        return int(df['employee_id'].isin(active_set).sum())
-
-curr_total  = len(df_filtered)
-curr_active = compute_active_display(selected_date, df_filtered, len(df_staff))
-curr_pct    = (curr_active / curr_total * 100) if curr_total > 0 else 0.0
-
-prev_total  = len(df_filtered)
-prev_active = compute_active_display(prev_date, df_filtered, len(df_staff))
-prev_pct    = (prev_active / prev_total * 100) if prev_total > 0 else 0.0
-
-first_total  = len(df_filtered)
-first_active = compute_active_display(first_date, df_filtered, len(df_staff))
-first_pct    = (first_active / first_total * 100) if first_total > 0 else 0.0
-
-delta_active = curr_active - prev_active
-delta_pct    = curr_pct - prev_pct
-# Chưa active = người trong filter (data1) chưa có trong snapshot
-inactive_count   = curr_total - int(df_filtered['employee_id'].isin(active_by_date[selected_date]).sum())
-cumulative_growth = curr_pct - first_pct
+inactive_count    = curr_total - curr_active
+delta_active      = curr_active - prev_active
+delta_gtalk       = curr_gtalk  - prev_gtalk
+delta_pct         = curr_pct    - prev_pct
+cumulative_growth = curr_pct    - first_pct
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -457,7 +418,7 @@ st.markdown(f"""
 <h1>GTALK WORKFORCE ADOPTION REPORT</h1>
 <div class="subtitle">
 Báo cáo tỷ lệ triển khai Gtalk · Ngày báo cáo: <strong>{selected_date}</strong> · 
-Tổng quát: <strong>{curr_active:,}/{curr_total:,}</strong> nhân sự đã sử dụng ({curr_pct:.1f}%)
+Nhân sự đã active: <strong>{curr_active:,}/{curr_total:,}</strong> · Tổng Gtalk: <strong>{curr_gtalk:,}</strong> · Tỷ lệ: <strong>{curr_pct:.1f}%</strong>
 </div>
 </div>
 """, unsafe_allow_html=True)
@@ -478,31 +439,37 @@ pct_fmt = "+.1f"
 
 st.markdown(f"""
 <div class="kpi-container">
+
 <div class="kpi-card">
-<div class="kpi-label">Tổng Nhân Sự (Headcount)</div>
+<div class="kpi-label">👥 Tổng Nhân Sự</div>
 <div class="kpi-value">{curr_total:,}</div>
-<div class="kpi-sub">Trong phạm vi bộ lọc hiện tại</div>
+<div class="kpi-sub">COUNTDISTINCT employee_id trong danh sách nhân sự · theo bộ lọc hiện tại</div>
 </div>
-<div class="kpi-card">
-<div class="kpi-label">Đã Active (Adopted)</div>
-<div class="kpi-value">{curr_active:,}</div>
-<div class="kpi-sub">vs. kỳ trước: {delta_html(delta_active)} user</div>
+
+<div class="kpi-card" style="border-top-color:#2c5f8a;">
+<div class="kpi-label" style="color:#2c5f8a;">📱 Đang Dùng Gtalk</div>
+<div class="kpi-value" style="color:#2c5f8a;">{curr_gtalk:,}</div>
+<div class="kpi-sub">Tổng user có trong Gtalk ngày {selected_date} · kể cả ngoài biên chế · {delta_html(delta_gtalk)} so kỳ trước</div>
 </div>
-<div class="kpi-card">
-<div class="kpi-label">Chưa Active (Remaining)</div>
-<div class="kpi-value">{inactive_count:,}</div>
-<div class="kpi-sub">Cần triển khai thêm</div>
+
+<div class="kpi-card" style="border-top-color:#006400;">
+<div class="kpi-label" style="color:#006400;">✅ Nhân Sự Đã Active</div>
+<div class="kpi-value" style="color:#006400;">{curr_active:,}</div>
+<div class="kpi-sub">Nhân sự trong biên chế đang dùng Gtalk · {delta_html(delta_active)} so kỳ trước</div>
 </div>
+
+<div class="kpi-card" style="border-top-color:#b30000;">
+<div class="kpi-label" style="color:#b30000;">⏳ Chưa Active</div>
+<div class="kpi-value" style="color:#b30000;">{inactive_count:,}</div>
+<div class="kpi-sub">Nhân sự trong biên chế chưa có trong Gtalk ngày {selected_date}</div>
+</div>
+
 <div class="kpi-card">
-<div class="kpi-label">Tỷ Lệ Adoption (%)</div>
+<div class="kpi-label">📈 Tỷ Lệ Adoption</div>
 <div class="kpi-value">{curr_pct:.1f}%</div>
-<div class="kpi-sub">Δ vs kỳ trước: {delta_html(delta_pct, pct_fmt, True)}</div>
+<div class="kpi-sub">Nhân sự đã active / Tổng HC · Δ kỳ trước: {delta_html(delta_pct, pct_fmt, True)} · Tích lũy: {cumulative_growth:+.1f}pp</div>
 </div>
-<div class="kpi-card">
-<div class="kpi-label">Tăng Trưởng Tích Lũy</div>
-<div class="kpi-value">{cumulative_growth:+.1f}pp</div>
-<div class="kpi-sub">Từ {first_date} đến {selected_date}</div>
-</div>
+
 </div>
 """, unsafe_allow_html=True)
 
@@ -515,9 +482,9 @@ st.markdown("<h3>XU HƯỚNG ADOPTION THEO THỜI GIAN</h3>", unsafe_allow_html=
 
 trend_data = []
 for i, d in enumerate(all_dates):
-    _, active, pct = compute_metrics(d, df_filtered)
+    _, _, active, pct = compute_metrics(d, df_filtered)
     prev_d = all_dates[i-1] if i > 0 else None
-    _, prev_a, _ = compute_metrics(prev_d, df_filtered)
+    _, _, prev_a, _ = compute_metrics(prev_d, df_filtered)
     new_users = active - prev_a if prev_d else 0
     trend_data.append({"date": d, "active": active, "pct": round(pct, 2), "new_users": new_users})
 
