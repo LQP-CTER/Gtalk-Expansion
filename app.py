@@ -300,7 +300,7 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-if st.sidebar.button("🔄 Tải lại dữ liệu mới nhất"):
+if st.sidebar.button("🔄Reload data"):
     load_data.clear()
     st.rerun()
 
