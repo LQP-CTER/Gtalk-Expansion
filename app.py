@@ -458,12 +458,6 @@ st.markdown(f"""
 <div class="kpi-sub">Nhân sự trong biên chế chưa có trong Gtalk ngày {selected_date}</div>
 </div>
 
-<div class="kpi-card" style="border-top-color:#2c5f8a;">
-<div class="kpi-label" style="color:#2c5f8a;">📱 Đang Dùng Gtalk</div>
-<div class="kpi-value" style="color:#2c5f8a;">{curr_gtalk:,}</div>
-<div class="kpi-sub">Tổng user có trong Gtalk ngày {selected_date} · kể cả ngoài biên chế · {delta_html(delta_gtalk)} so kỳ trước</div>
-</div>
-
 <div class="kpi-card">
 <div class="kpi-label">📈 Tỷ Lệ Adoption</div>
 <div class="kpi-value">{curr_pct:.1f}%</div>
